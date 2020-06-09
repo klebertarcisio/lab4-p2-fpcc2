@@ -1,6 +1,6 @@
 ---
 title: "Implementando ICs"
-author: "Nazareno"
+author: "Kleber Tarcísio"
 output:
   html_document:
     theme: readable
@@ -16,6 +16,10 @@ output:
 ```{r setup, include=FALSE, message=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
+library(boot)
+library(tidyr)
+library(knitr)
+library(broom)
 theme_set(theme_bw())
 ```
 
@@ -37,9 +41,95 @@ glimpse(lastfm)
 
 ## Proporção de artistas novos e popularidade
 
-Utilizaremos ICs para estimar duas métricas sobre os usuários do LastFM em geral durante um período de 6 meses. Em ambos os casos faremos isso a partir de uma amostra de 300 usuários. As duas métricas são: 
+Utilizaremos ICs para estimar duas métricas sobre os usuários do LastFM em geral durante um período de 6 meses. Em ambos os casos faremos isso a partir de uma amostra de 300 usuários.
 
-1. Qual a proporção de novos artistas em geral escutada por usuários?
-2. Para os usuários que gostam de música muito pop (mediana_pop > 5), qual a correlação entre a popularidade mediana dos artistas escutado e a proporção dos artistas escutados que eram novos. 
+# Qual a proporção de novos artistas em geral escutada por usuários?
+# 1.2 Usando as funções boot e tidy
+```{r include=TRUE, message=FALSE}
+#proporcao de novos artistas em geral em porcentagem
 
-Crie intervalos com 95% de confiança.
+theta = function(d, i) {
+    agrupado = d %>% 
+        slice(i) %>% 
+        select(news) %>%
+        summarise(proporcao = mean(news)/n()*100)
+    m = agrupado %>% pull(proporcao)
+
+    m
+}
+
+booted <- boot(data = lastfm, 
+               statistic = theta, 
+               R = 300)
+
+ci = tidy(booted, 
+          conf.level = .95,
+          conf.method = "basic",
+          conf.int = TRUE)
+
+ci
+
+glimpse(ci)
+
+ci %>%
+    ggplot(aes(
+        x = "",
+        y = statistic,
+        ymin = conf.low,
+        ymax = conf.high
+    )) +
+    geom_pointrange() +
+    geom_point(size = 4) + 
+    labs(x = "News", 
+         y = "Proporção (%)")
+```
+
+Diante do gráfico apresentado, a proporção de novos artistas escutados entre os totais está aproximadamente entre 10% e 11%.
+
+# 2. Para os usuários que gostam de música muito pop (mediana_pop > 5), qual a correlação entre a popularidade mediana dos artistas escutado e a proporção dos artistas escutados que eram novos. 
+
+Inicialmente, vou gerar um gráfico de dispersão para saber se visivelmente já temos algum indício.
+
+```{r include=FALSE, message=FALSE}
+  lastfm = read_csv(here::here("data/experimento-lastfm.csv"), 
+                  col_types = cols(.default = col_double(), 
+                                   user = col_character()))
+
+  lastfm = lastfm %>% 
+  sample_n(300) %>% 
+  select(news, old, mediana_pop)
+```
+
+```{r include=TRUE, message=FALSE}
+
+  lastfm %>%
+  filter(mediana_pop > 5) %>%
+  ggplot(aes(x = mediana_pop, y = news)) +
+  geom_point(size = 5, alpha = 0.5) +
+  labs(x = "Música muito Pop (mediana_pop > 5)",
+       y = "Proporção dos artistas novos") +
+  scale_y_continuous(labels = scales::percent_format(accuracy = .1))
+```
+
+O gráfico de dispersão não deixa transparente uma correlação entre as variáveis proporção dos artistas novos e música muito pop. Desse modo, decidi calcular as três correlações clássicas: pearson, spearman e kendall.
+
+Abaixo estão os valores de três correlações: pearson, spearman e kendall. A correlação de Pearson checa a relação de duas variáveis contínuas. A correlação de Spearman checa a relação de duas variáveis contínuas ou ordinais. Já a correlação de kendall verifica a semelhança entre as ordens dos valores se estiverem classificados por cada uma das quantidades. Para a situação em questão, eu acredito que a correlação mais adequeda é a de spearman.
+
+```{r include=TRUE, message=FALSE}
+lastfm %>%
+  filter(mediana_pop > 5) %>%
+  summarise(
+    pearson = cor(news, mediana_pop, method = "pearson"),
+    spearman = cor(news, mediana_pop, method = "spearman"),
+    kendall = cor(news, mediana_pop, method = "kendall")
+  ) %>%
+  print()
+```
+```{r include=TRUE, message=FALSE}
+thetaSpearman <- pull(lastfm %>%
+                        filter(mediana_pop > 5) %>%
+                        summarise(spearman = cor(news, mediana_pop, method = "spearman")))
+
+thetaSpearman
+```
+Desta forma, acredito que podemos concluir que não há uma correlação forte entre as duas variáveis em análise.
